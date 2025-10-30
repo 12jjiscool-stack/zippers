@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ZIPPED Proxy</title>
+<style>
+:root{background:#081229;color:#eef;}
+body{margin:0;font-family:Inter, Arial, sans-serif;background:linear-gradient(180deg,#021026 0%, #081229 100%);color:#eef}
+.header{display:flex;align-items:center;gap:12px;padding:12px;background:rgba(255,255,255,0.02)}
+.brand{font-weight:700;color:#7c4dff;font-size:18px;padding:6px 10px;border-radius:6px}
+.controls{flex:1;display:flex;gap:8px;align-items:center}
+.controls input{flex:1;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:rgba(255,255,255,0.02);color:inherit}
+.controls button{padding:8px 10px;border-radius:6px;border:0;background:#7c4dff;color:#021}
+.tabbar{display:flex;gap:6px;padding:8px;overflow:auto;background:rgba(255,255,255,0.01)}
+.tab{padding:8px 12px;border-radius:6px;background:rgba(255,255,255,0.02);cursor:pointer;min-width:120px}
+.tab.active{background:linear-gradient(90deg, rgba(124,77,255,0.12), rgba(124,77,255,0.05));border:1px solid rgba(124,77,255,0.08)}
+.content{padding:12px;flex:1}
+.viewframe{width:100%;height:75vh;border-radius:8px;border:0}
+.console{background:#000;color:#0f0;padding:10px;height:75vh;overflow:auto;font-family:monospace}
+.small{font-size:12px;color:#9aa4b2}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">ZIPPED</div>
+    <div class="controls">
+      <input id="address" placeholder="Enter zipped://youtube.com or https://example.com" />
+      <button id="go">Go</button>
+      <button id="new">New Tab</button>
+      <button id="dev" title="Devtools">Dev</button>
+    </div>
+  </div>
+
+  <div id="tabBar" class="tabbar"></div>
+
+  <main id="content" class="content">
+    <div id="empty" class="small">Open a tab to start.</div>
+  </main>
+
+<script>
+const base = window.location.origin;
+const ADDRESS = document.getElementById('address');
+const GO = document.getElementById('go');
+const NEW = document.getElementById('new');
+const DEV = document.getElementById('dev');
+const TABBAR = document.getElementById('tabBar');
+const CONTENT = document.getElementById('content');
+
+let tabs = [];
+let activeId = null;
+let idCounter = 1;
+
+function makeTab(url){
+  const id = 'tab-'+(idCounter++);
+  const tab = {id, url: url||'zipped://home', title: label(url||'zipped://home')};
+  tabs.push(tab);
+  renderTabs();
+  setActive(id);
+  loadTab(tab);
+}
+
+function renderTabs(){
+  TABBAR.innerHTML='';
+  tabs.forEach(t=>{
+    const el = document.createElement('div');
+    el.className = 'tab' + (t.id===activeId? ' active':'');
+    el.textContent = t.title;
+    el.onclick = ()=>{ setActive(t.id); loadTab(t); };
+    const close = document.createElement('button');
+    close.textContent='✕'; close.style.marginLeft='8px';
+    close.onclick = (e)=>{ e.stopPropagation(); closeTab(t.id); };
+    el.appendChild(close);
+    TABBAR.appendChild(el);
+  });
+}
+
+function setActive(id){ activeId = id; renderTabs(); }
+
+function closeTab(id){
+  const idx = tabs.findIndex(t=>t.id===id);
+  if (idx>=0) tabs.splice(idx,1);
+  if (activeId===id){
+    if (tabs.length) { setActive(tabs[Math.max(0,idx-1)].id); loadTab(tabs[Math.max(0,idx-1)]); }
+    else { activeId=null; CONTENT.innerHTML='<div id="empty" class="small">Open a tab to start.</div>'; }
+  } else renderTabs();
+}
+
+async function loadTab(tab){
+  CONTENT.innerHTML = '<div class="small">Loading...</div>';
+  if (tab.url.startsWith('zipped://devtools')){
+    // show simple console
+    CONTENT.innerHTML = '<div class="console" id="console"></div>';
+    const consoleEl = document.getElementById('console');
+    const input = document.createElement('input');
+    input.style.width='100%'; input.style.background='#000'; input.style.color='#0f0'; input.style.border='0';
+    input.placeholder='Type JavaScript to run in this console (runs in page context)';
+    input.onkeydown = (e)=>{ if(e.key==='Enter'){ try{ const r=eval(input.value); consoleEl.innerHTML += '<div>> '+escapeHtml(input.value)+'</div><div>'+escapeHtml(String(r))+'</div>'; input.value=''; } catch(err){ consoleEl.innerHTML+='<div style="color:red">Error: '+escapeHtml(err.message)+'</div>'; } } };
+    consoleEl.appendChild(input);
+    input.focus();
+    return;
+  }
+
+  if (tab.url.startsWith('zipped://home')){
+    CONTENT.innerHTML = '<iframe class="viewframe" sandbox="allow-same-origin allow-forms" srcdoc="<h1 style=\"color:white;text-align:center\">Welcome to ZIPPED</h1>"></iframe>';
+    return;
+  }
+
+  // external URL
+  const prox = base + '/.netlify/functions/proxy?url=' + encodeURIComponent(tab.url);
+  // create iframe with src pointing to proxied HTML (binary responses served as base64 by function)
+  CONTENT.innerHTML = '';
+  const ifr = document.createElement('iframe');
+  ifr.className = 'viewframe';
+  ifr.sandbox = 'allow-scripts allow-forms';
+  // set src to prox endpoint so Netlify serves it properly
+  ifr.src = prox;
+  CONTENT.appendChild(ifr);
+}
+
+function label(url){ return url.replace(/^https?:\/\//,'').replace(/^zipped:\/\//,''); }
+function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+GO.onclick = ()=>{ const url = ADDRESS.value.trim(); if(!url) return; const normalized = normalize(url); if (activeId){ const t = tabs.find(x=>x.id===activeId); t.url = normalized; t.title = label(normalized); loadTab(t); renderTabs(); } else makeTab(normalized); };
+NEW.onclick = ()=> makeTab('zipped://home');
+DEV.onclick = ()=> makeTab('zipped://devtools');
+
+function normalize(s){
+  if (/^zipped:\/\//i.test(s)) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.includes('.')) return 'https://'+s;
+  return 'zipped://'+s;
+}
+
+// start
+makeTab('zipped://home');
+</script>
+</body>
+</html>
